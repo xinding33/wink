@@ -59,6 +59,10 @@ On October 8, 2026, on an Apple M5 Max running macOS 27.0.1:
 
 Native UI automation was unavailable in the build environment (computer-use connection timed out), so menu appearance and mouse interaction have not been visually verified.
 
+## Development
+
+Wink's implementation, tests, and documentation were developed with AI assistance.
+
 ## License
 
 Copyright 2026 Xin Ding. Licensed under the [Apache License, Version 2.0](LICENSE).
