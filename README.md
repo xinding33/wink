@@ -2,11 +2,28 @@
 
 A small, free native macOS menu bar app to disconnect and reconnect external monitors while their cables stay plugged in. Built for Apple silicon and macOS 13 or newer; hardware support depends on macOS and the monitor connection.
 
+## Install
+
+Requires macOS 13+ on Apple silicon and the Xcode command line tools. Homebrew builds Wink on your Mac, so there's no Gatekeeper warning.
+
+```sh
+brew install xinding33/tap/wink
+open "$(brew --prefix)/opt/wink/Wink.app"
+```
+
+Then choose **Open at Login** from its menu bar icon. Quit Wink before `brew upgrade wink`, then open it again.
+
+To uninstall, turn off **Open at Login** and quit Wink from its menu, then run `brew uninstall wink`.
+
+To build it yourself instead, see [Build](#build).
+
 ## Use
 
-Open `dist/Wink.app`. Click the two-displays icon in the menu bar, then click a checked monitor to turn it off. Click its “off” entry to reconnect it, or choose **Reconnect All**. **Quit & Reconnect Displays** restores monitors before exiting.
+Open Wink. Click the two-displays icon in the menu bar, then click a checked monitor to turn it off. Click its “off” entry to reconnect it, or choose **Reconnect All**. **Quit & Reconnect Displays** restores monitors before exiting.
 
-The app keeps the built-in screen and at least one active screen on. Mirrored displays must be changed to extended displays in System Settings first. Reconnecting a monitor can cause macOS to reposition windows. Displays may reconnect after sleep or a cable change; the app does not automatically turn them back off.
+Wink remembers the monitors you turn off and turns them off again whenever they appear while it is running: at launch, after sleep, and after a cable change. Turn on **Open at Login** (a LaunchAgent in `~/Library/LaunchAgents`) to keep them off after a restart. Quitting reconnects them only until Wink launches again; reconnecting a monitor from the menu (or **Reconnect All**) forgets it. A remembered monitor that is not plugged in is listed as “off when connected”; click it to forget it. Hold Option while launching Wink to leave remembered monitors on for that session. If a monitor fails to turn off automatically, Wink stops retrying it until you turn it off again from the menu.
+
+The app keeps the built-in screen and at least one active screen on. Mirrored displays must be changed to extended displays in System Settings first. Reconnecting a monitor can cause macOS to reposition windows.
 
 ## Build
 
@@ -24,7 +41,7 @@ The build creates an ad-hoc signed app and ZIP for the current Mac architecture.
 
 This uses the private `SLSConfigureDisplayEnabled` / `CGSConfigureDisplayEnabled` API loaded at runtime from SkyLight, inside a CoreGraphics transaction with `.forSession`. It makes no permanent display-configuration changes. Private APIs may change in future macOS releases. No SIP changes are needed.
 
-Before turning off a monitor, the app writes its ID, UUID and current boot identifier to `~/Library/Application Support/Display Switch/recovery.json`. A small child process reconnects recorded displays if the app crashes or all remaining active screens disappear. Failed reconnect records are retained for another attempt. Relaunching the app attempts recovery; records from previous boots are ignored to avoid reusing stale display IDs. A disconnected or powered-off monitor may require reconnecting its cable. Logging out or restarting resets the session configuration.
+Before turning off a monitor, the app writes its ID, UUID and current boot identifier to `~/Library/Application Support/Display Switch/recovery.json`. A small child process reconnects recorded displays if the app crashes or all remaining active screens disappear. Failed reconnect records are retained for another attempt. Relaunching the app attempts recovery; records from previous boots are ignored to avoid reusing stale display IDs. A disconnected or powered-off monitor may require reconnecting its cable. Logging out or restarting resets the session configuration; Wink then re-applies remembered monitors by UUID in `remembered.json` in the same folder when it next launches.
 
 Only displays disabled by this app are restored. Recovery is best-effort: a macOS/WindowServer failure or simultaneous termination of the app and helper can require a relaunch, cable reconnect, or logout. The app does not override monitors disabled by other utilities.
 

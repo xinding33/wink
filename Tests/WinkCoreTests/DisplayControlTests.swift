@@ -28,12 +28,14 @@ final class DisplayControlTests: XCTestCase {
     var folder: URL!
     var backend: FakeBackend!
     var store: RecoveryStore!
+    var preferences: PreferenceStore!
     var controller: DisplayController!
     override func setUp() {
         folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         backend = FakeBackend()
         store = RecoveryStore(url: folder.appendingPathComponent("state.json"), boot: "test-boot")
-        controller = DisplayController(backend: backend, store: store, wait: { _ in })
+        preferences = PreferenceStore(url: folder.appendingPathComponent("remembered.json"))
+        controller = DisplayController(backend: backend, store: store, preferences: preferences, wait: { _ in })
     }
     override func tearDown() { try? FileManager.default.removeItem(at: folder) }
 
@@ -107,5 +109,49 @@ final class DisplayControlTests: XCTestCase {
         XCTAssertTrue(controller.reconnectAll().isEmpty)
         XCTAssertEqual(backend.changes.count, 1)
         XCTAssertTrue(try store.load().isEmpty)
+    }
+
+    func testTurningOffRemembersAcrossReboot() throws {
+        try controller.disconnect(2)
+        XCTAssertEqual(try preferences.load().map(\.uuid), ["two"])
+        // After a reboot the display returns with a different ID but the same UUID.
+        backend = FakeBackend()
+        backend.screens[1].id = 7
+        let rebooted = DisplayController(backend: backend, store: RecoveryStore(url: store.url, boot: "next-boot"),
+                                         preferences: preferences, wait: { _ in })
+        XCTAssertTrue(rebooted.applyPreferences().isEmpty)
+        XCTAssertEqual(backend.screens.map(\.uuid), ["one"])
+        XCTAssertEqual(try rebooted.remembered().map(\.id), [7])
+    }
+    func testAutomaticReconnectKeepsPreference() throws {
+        try controller.disconnect(2)
+        XCTAssertTrue(controller.reconnectAll().isEmpty)
+        XCTAssertEqual(try preferences.load().map(\.uuid), ["two"])
+    }
+    func testTurnOnForgetsPreference() throws {
+        try controller.disconnect(2)
+        try controller.turnOn(XCTUnwrap(controller.remembered().first))
+        XCTAssertTrue(try preferences.load().isEmpty)
+        XCTAssertTrue(controller.applyPreferences().isEmpty)
+        XCTAssertEqual(backend.screens.count, 2)
+    }
+    func testApplyPreferencesRespectsPolicy() throws {
+        try preferences.save([RememberedDisplay(uuid: "one", name: "First"), RememberedDisplay(uuid: "two", name: "Second")])
+        XCTAssertTrue(controller.applyPreferences().isEmpty)
+        XCTAssertEqual(backend.screens.count, 1)
+        XCTAssertEqual(backend.changes.count, 1)
+    }
+    func testApplyPreferencesReportsAndSkipsFailures() throws {
+        try preferences.save([RememberedDisplay(uuid: "two", name: "Second")])
+        XCTAssertTrue(controller.applyPreferences(skipping: ["two"]).isEmpty)
+        XCTAssertTrue(backend.changes.isEmpty)
+        backend.ignoreDisable = true
+        XCTAssertEqual(Array(controller.applyPreferences().keys), ["two"])
+        XCTAssertEqual(backend.screens.count, 2)
+    }
+    func testUnconnectedPreferenceIsIgnored() throws {
+        try preferences.save([RememberedDisplay(uuid: "absent", name: "Absent")])
+        XCTAssertTrue(controller.applyPreferences().isEmpty)
+        XCTAssertTrue(backend.changes.isEmpty)
     }
 }

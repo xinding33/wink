@@ -120,12 +120,45 @@ public final class RecoveryStore {
     }
 }
 
+public struct RememberedDisplay: Codable, Equatable {
+    public var uuid: String
+    public var name: String
+    public init(uuid: String, name: String) { self.uuid = uuid; self.name = name }
+}
+
+/// Displays the user chose to keep off. Keyed by UUID, which stays stable across reboots.
+public final class PreferenceStore {
+    public let url: URL
+    public init(url: URL) { self.url = url }
+
+    public func load() throws -> [RememberedDisplay] {
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        return try JSONDecoder().decode([RememberedDisplay].self, from: Data(contentsOf: url))
+    }
+
+    public func save(_ displays: [RememberedDisplay]) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(displays).write(to: url, options: .atomic)
+    }
+
+    public func remember(_ display: Display) throws {
+        try save(load().filter { $0.uuid != display.uuid } + [RememberedDisplay(uuid: display.uuid, name: display.name)])
+    }
+
+    public func forget(_ uuid: String) throws {
+        let current = try load()
+        if current.contains(where: { $0.uuid == uuid }) { try save(current.filter { $0.uuid != uuid }) }
+    }
+}
+
 public final class DisplayController {
     public let backend: DisplayBackend
     public let store: RecoveryStore
+    public let preferences: PreferenceStore?
     public let wait: (TimeInterval) -> Void
-    public init(backend: DisplayBackend, store: RecoveryStore, wait: @escaping (TimeInterval) -> Void = Thread.sleep) {
-        self.backend = backend; self.store = store; self.wait = wait
+    public init(backend: DisplayBackend, store: RecoveryStore, preferences: PreferenceStore? = nil,
+                wait: @escaping (TimeInterval) -> Void = Thread.sleep) {
+        self.backend = backend; self.store = store; self.preferences = preferences; self.wait = wait
     }
 
     public func remembered() throws -> [Display] { try store.load() }
@@ -162,6 +195,31 @@ public final class DisplayController {
             if (try? awaitState(target, online: true)) == true { try? forget(target) }
             throw error
         }
+        try preferences?.remember(target)
+    }
+
+    /// Reconnects a display at the user's request and stops keeping it off.
+    public func turnOn(_ display: Display) throws {
+        // Forget first so a screen-change re-apply cannot turn it straight back off.
+        try preferences?.forget(display.uuid)
+        try reconnect(display)
+    }
+
+    /// Turns off connected displays the user chose to keep off. Displays that must stay on are skipped.
+    /// Returns failure messages keyed by display UUID.
+    public func applyPreferences(skipping skipped: Set<String> = []) -> [String: String] {
+        guard let preferences, backend.available else { return [:] }
+        var failures: [String: String] = [:]
+        do {
+            for wanted in try preferences.load() where !skipped.contains(wanted.uuid) {
+                let live = try backend.displays()
+                guard let target = live.first(where: { $0.uuid == wanted.uuid && $0.active }),
+                      DisplayPolicy.reasonToKeepOn(target, among: live) == nil else { continue }
+                do { try disconnect(target.id) }
+                catch { failures[wanted.uuid] = "\(wanted.name): \(error.localizedDescription)" }
+            }
+        } catch { failures[""] = error.localizedDescription }
+        return failures
     }
 
     private func forget(_ display: Display) throws {

@@ -7,9 +7,29 @@ let appName = "Wink"
 let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     .appendingPathComponent("Display Switch", isDirectory: true)
 let stateURL = supportURL.appendingPathComponent("recovery.json")
+let preferencesURL = supportURL.appendingPathComponent("remembered.json")
 
-func makeController(_ url: URL = stateURL) -> DisplayController {
-    DisplayController(backend: NativeDisplayBackend(), store: RecoveryStore(url: url))
+func makeController(_ url: URL = stateURL, preferences: PreferenceStore? = nil) -> DisplayController {
+    DisplayController(backend: NativeDisplayBackend(), store: RecoveryStore(url: url), preferences: preferences)
+}
+
+let agentLabel = "io.github.xinding33.wink"
+let agentURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/\(agentLabel).plist")
+
+/// For Homebrew installs, use the version-independent opt/ path so Open at Login survives upgrades.
+func stableExecutablePath() -> String {
+    Bundle.main.bundlePath.replacingOccurrences(of: #"/Cellar/wink/[^/]+/"#, with: "/opt/wink/", options: .regularExpression)
+        + "/Contents/MacOS/Wink"
+}
+
+/// Open at Login is a LaunchAgent. It is not kept alive, so a crash leaves displays reconnected.
+var opensAtLogin: Bool { FileManager.default.fileExists(atPath: agentURL.path) }
+
+func writeLaunchAgent() throws {
+    let plist: [String: Any] = ["Label": agentLabel, "ProgramArguments": [stableExecutablePath()],
+                                "RunAtLoad": true, "ProcessType": "Interactive"]
+    try FileManager.default.createDirectory(at: agentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: agentURL)
 }
 
 func report(_ text: String) { FileHandle.standardError.write(Data((text + "\n").utf8)) }
@@ -90,11 +110,16 @@ if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--test-cycle
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    let controller = makeController()
+    let controller = makeController(preferences: PreferenceStore(url: preferencesURL))
     let helper = RecoveryHelper()
     var statusItem: NSStatusItem!
     var refreshTimer: Timer?
     var lastError: String?
+    // Holding Option at launch leaves remembered displays on for this session.
+    let pausePreferences = NSEvent.modifierFlags.contains(.option)
+    // Displays that failed to turn off automatically are not retried until the user turns them off again.
+    var gaveUp: Set<String> = []
+    var pendingApply: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "local.DisplaySwitch")
@@ -110,7 +135,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.monitor() }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(woke), name: NSWorkspace.didWakeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        // Give displays time to come online after login before turning remembered ones off.
+        scheduleApply(after: 2)
     }
+
+    func scheduleApply(after delay: TimeInterval) {
+        guard !pausePreferences else { return }
+        pendingApply?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.applyPreferences() }
+        pendingApply = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    func applyPreferences() {
+        guard helper.running else { scheduleApply(after: 2); return }
+        refreshNames()
+        let failures = controller.applyPreferences(skipping: gaveUp)
+        if !failures.isEmpty {
+            gaveUp.formUnion(failures.keys)
+            lastError = failures.values.sorted().joined(separator: "\n")
+        }
+        rebuildMenu()
+    }
+
+    @objc func screensChanged() { scheduleApply(after: 1.5) }
 
     func refreshNames() {
         guard let backend = controller.backend as? NativeDisplayBackend else { return }
@@ -121,7 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    @objc func woke() { refreshNames(); rebuildMenu() }
+    @objc func woke() { refreshNames(); rebuildMenu(); scheduleApply(after: 2) }
     func menuWillOpen(_ menu: NSMenu) { refreshNames(); rebuildMenu(menu) }
 
     func monitor() {
@@ -159,8 +208,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let live = try controller.backend.displays()
             let saved = try controller.remembered()
             let disconnected = saved.filter { old in !live.contains(where: { $0.uuid == old.uuid }) }
+            let absent = try (controller.preferences?.load() ?? []).filter { wanted in
+                !live.contains(where: { $0.uuid == wanted.uuid }) && !disconnected.contains(where: { $0.uuid == wanted.uuid })
+            }
             let external = live.filter { !$0.builtIn }
-            if external.isEmpty && disconnected.isEmpty { add("No external displays connected", to: menu).isEnabled = false }
+            if external.isEmpty && disconnected.isEmpty && absent.isEmpty { add("No external displays connected", to: menu).isEnabled = false }
             for display in external.sorted(by: { $0.id < $1.id }) {
                 let item = add(display.name, action: #selector(toggle(_:)), to: menu)
                 item.state = .on
@@ -173,8 +225,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for display in disconnected {
                 let item = add(display.name + " — off", action: #selector(reconnect(_:)), to: menu)
                 item.representedObject = display.id
-                item.toolTip = "Reconnect \(display.name)"
+                item.toolTip = "Reconnect \(display.name). Until you do, Wink turns it off whenever it connects."
                 item.isEnabled = controller.backend.available
+            }
+            for wanted in absent {
+                let item = add(wanted.name + " — off when connected", action: #selector(forget(_:)), to: menu)
+                item.representedObject = wanted.uuid
+                item.toolTip = "Click to stop turning off \(wanted.name) when it connects"
+            }
+            if pausePreferences && !(try controller.preferences?.load() ?? []).isEmpty {
+                add("Remembered displays paused (Option held at launch)", to: menu).isEnabled = false
             }
             if live.contains(where: { $0.builtIn }) {
                 add("Built-in display stays on", to: menu).isEnabled = false
@@ -187,9 +247,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if lastError != nil { add("View Last Error…", action: #selector(showLastError), to: menu) }
         add("Display Settings…", action: #selector(openSettings), to: menu)
+        add("Open at Login", action: #selector(toggleLoginItem), to: menu).state = opensAtLogin ? .on : .off
         menu.addItem(.separator())
         add("About Wink", action: #selector(about), to: menu)
-        add("Quit & Reconnect Displays", action: #selector(quit), to: menu, key: "q")
+        add("Quit & Reconnect Displays", action: #selector(quit), to: menu, key: "q").toolTip =
+            "Displays turn back on until Wink launches again. Reconnect a display to stop keeping it off."
         menu.delegate = self
         if existing == nil { statusItem.menu = menu }
     }
@@ -207,20 +269,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let id = sender.representedObject as? UInt32 else { return }
         perform {
             guard self.helper.running else { throw DisplayError("The recovery helper is restarting. Please try again.") }
+            if let uuid = try self.controller.backend.displays().first(where: { $0.id == id })?.uuid { self.gaveUp.remove(uuid) }
             try self.controller.disconnect(id)
         }
     }
     @objc func reconnect(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UInt32 else { return }
         perform {
-            if let display = try self.controller.remembered().first(where: { $0.id == id }) { try self.controller.reconnect(display) }
+            if let display = try self.controller.remembered().first(where: { $0.id == id }) { try self.controller.turnOn(display) }
         }
     }
     @objc func reconnectAll() {
         perform {
-            let errors = self.controller.reconnectAll()
+            var errors: [String] = []
+            for display in try self.controller.remembered() {
+                do { try self.controller.turnOn(display) } catch { errors.append(error.localizedDescription) }
+            }
             if !errors.isEmpty { throw DisplayError(errors.joined(separator: "\n")) }
         }
+    }
+    @objc func forget(_ sender: NSMenuItem) {
+        guard let uuid = sender.representedObject as? String else { return }
+        perform { try self.controller.preferences?.forget(uuid) }
+    }
+    @objc func toggleLoginItem() {
+        perform { if opensAtLogin { try FileManager.default.removeItem(at: agentURL) } else { try writeLaunchAgent() } }
     }
     @objc func showLastError() {
         guard let lastError else { return }
@@ -237,8 +310,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func about() {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationName: appName, .applicationVersion: "1.0",
-            .credits: NSAttributedString(string: "A small, free utility for external displays.\n\nClick a checked display to disconnect it. Click it again to reconnect. Quitting reconnects displays.\n\nUses a private macOS API, which may change in future updates.")
+            .applicationName: appName,
+            .credits: NSAttributedString(string: "A small, free utility for external displays.\n\nClick a checked display to disconnect it. Click it again to reconnect. Disconnected displays stay off whenever Wink is running, including after a restart with Open at Login. Quitting reconnects displays until the next launch.\n\nUses a private macOS API, which may change in future updates.")
         ])
     }
     @objc func quit() { NSApp.terminate(nil) }
@@ -257,6 +330,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return .terminateNow
     }
 }
+
+// Keep the login item pointing at this copy if the app has moved.
+if opensAtLogin { try? writeLaunchAgent() }
 
 let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
