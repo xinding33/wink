@@ -4,7 +4,7 @@ A small, free native macOS menu bar app to disconnect and reconnect external mon
 
 ## Install
 
-Requires macOS 13+ on Apple silicon and the Xcode command line tools. Homebrew builds Wink on your Mac, so there's no Gatekeeper warning.
+Requires macOS 13+ on Apple silicon and the Xcode command line tools. Homebrew builds Wink on your Mac, so there's no Gatekeeper warning. (Signed and notarized downloads are planned; see [#1](https://github.com/xinding33/wink/issues/1).)
 
 ```sh
 brew install xinding33/tap/wink
