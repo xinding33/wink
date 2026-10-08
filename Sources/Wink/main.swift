@@ -1,8 +1,9 @@
 import AppKit
-import DisplaySwitchCore
+import WinkCore
 import Darwin
 
-let appName = "Display Switch"
+let appName = "Wink"
+// Keep the original recovery directory so an upgrade can reconnect disabled displays.
 let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     .appendingPathComponent("Display Switch", isDirectory: true)
 let stateURL = supportURL.appendingPathComponent("recovery.json")
@@ -187,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if lastError != nil { add("View Last Error…", action: #selector(showLastError), to: menu) }
         add("Display Settings…", action: #selector(openSettings), to: menu)
         menu.addItem(.separator())
-        add("About Display Switch", action: #selector(about), to: menu)
+        add("About Wink", action: #selector(about), to: menu)
         add("Quit & Reconnect Displays", action: #selector(quit), to: menu, key: "q")
         menu.delegate = self
         if existing == nil { statusItem.menu = menu }
@@ -225,7 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let lastError else { return }
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Display Switch"
+        alert.messageText = "Wink"
         alert.informativeText = lastError
         alert.alertStyle = .warning
         alert.runModal()

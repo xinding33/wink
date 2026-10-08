@@ -1,5 +1,5 @@
 import XCTest
-@testable import DisplaySwitchCore
+@testable import WinkCore
 
 final class FakeBackend: DisplayBackend {
     var available = true

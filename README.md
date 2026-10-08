@@ -1,10 +1,10 @@
-# Display Switch
+# Wink
 
 A small, free native macOS menu bar app to disconnect and reconnect external monitors while their cables stay plugged in. Built for Apple silicon and macOS 13 or newer; hardware support depends on macOS and the monitor connection.
 
 ## Use
 
-Open `dist/Display Switch.app`. Click the two-displays icon in the menu bar, then click a checked monitor to turn it off. Click its “off” entry to reconnect it, or choose **Reconnect All**. **Quit & Reconnect Displays** restores monitors before exiting.
+Open `dist/Wink.app`. Click the two-displays icon in the menu bar, then click a checked monitor to turn it off. Click its “off” entry to reconnect it, or choose **Reconnect All**. **Quit & Reconnect Displays** restores monitors before exiting.
 
 The app keeps the built-in screen and at least one active screen on. Mirrored displays must be changed to extended displays in System Settings first. Reconnecting a monitor can cause macOS to reposition windows. Displays may reconnect after sleep or a cable change; the app does not automatically turn them back off.
 
@@ -15,7 +15,7 @@ Requires Xcode or the Swift command-line tools. No packages, subscription, admin
 ```sh
 swift test
 bash scripts/build.sh
-open "dist/Display Switch.app"
+open "dist/Wink.app"
 ```
 
 The build creates an ad-hoc signed app and ZIP for the current Mac architecture. It is not notarized for distribution to other Macs.
@@ -31,13 +31,13 @@ Only displays disabled by this app are restored. Recovery is best-effort: a macO
 Read-only diagnostics:
 
 ```sh
-"dist/Display Switch.app/Contents/MacOS/DisplaySwitch" --diagnose
+"dist/Wink.app/Contents/MacOS/Wink" --diagnose
 ```
 
 Hardware integration test (briefly disconnects the specified external display and then reconnects it):
 
 ```sh
-"dist/Display Switch.app/Contents/MacOS/DisplaySwitch" --test-cycle DISPLAY_ID
+"dist/Wink.app/Contents/MacOS/Wink" --test-cycle DISPLAY_ID
 ```
 
 ## API references
@@ -58,3 +58,9 @@ On October 8, 2026, on an Apple M5 Max running macOS 27.0.1:
 - The app bundle's signature and property list passed validation.
 
 Native UI automation was unavailable in the build environment (computer-use connection timed out), so menu appearance and mouse interaction have not been visually verified.
+
+## License
+
+Copyright 2026 Xin Ding. Licensed under the [Apache License, Version 2.0](LICENSE).
+
+Wink retains its original bundle identifier and recovery directory for compatibility with the earlier Display Switch build.

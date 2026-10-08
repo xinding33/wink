@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "DisplaySwitch",
+    name: "Wink",
     platforms: [.macOS(.v13)],
-    products: [.executable(name: "DisplaySwitch", targets: ["DisplaySwitch"])],
+    products: [.executable(name: "Wink", targets: ["Wink"])],
     targets: [
-        .target(name: "DisplaySwitchCore"),
-        .executableTarget(name: "DisplaySwitch", dependencies: ["DisplaySwitchCore"]),
-        .testTarget(name: "DisplaySwitchCoreTests", dependencies: ["DisplaySwitchCore"])
+        .target(name: "WinkCore"),
+        .executableTarget(name: "Wink", dependencies: ["WinkCore"]),
+        .testTarget(name: "WinkCoreTests", dependencies: ["WinkCore"])
     ]
 )
