@@ -4,16 +4,19 @@ A small, free native macOS menu bar app to disconnect and reconnect external mon
 
 ## Install
 
-Requires macOS 13+ on Apple silicon and the Xcode command line tools. Homebrew builds Wink on your Mac, so there's no Gatekeeper warning. (Signed and notarized downloads are planned; see [#1](https://github.com/xinding33/wink/issues/1).)
+Requires macOS 13+ on Apple silicon. Releases are signed with a Developer ID and notarized by Apple.
 
 ```sh
-brew install xinding33/tap/wink
-open "$(brew --prefix)/opt/wink/Wink.app"
+brew install --cask xinding33/tap/wink
 ```
 
-Then choose **Open at Login** from its menu bar icon. Quit Wink before `brew upgrade wink`, then open it again.
+Or download `Wink-x.y.z.zip` from the [latest release](https://github.com/xinding33/wink/releases/latest), unzip it, and move `Wink.app` to Applications.
 
-To uninstall, turn off **Open at Login** and quit Wink from its menu, then run `brew uninstall wink`.
+Open Wink, then choose **Open at Login** from its menu bar icon. `brew upgrade` quits Wink, which reconnects your displays; open it again afterwards.
+
+To uninstall, turn off **Open at Login** and quit Wink from its menu, then run `brew uninstall --cask wink` (or delete `Wink.app`).
+
+If you installed the earlier source-build formula, switch with `brew uninstall wink && brew install --cask xinding33/tap/wink`. Wink moves its remembered displays to the new location on first launch.
 
 To build it yourself instead, see [Build](#build).
 
@@ -35,13 +38,19 @@ bash scripts/build.sh
 open "dist/Wink.app"
 ```
 
-The build creates an ad-hoc signed app and ZIP for the current Mac architecture. It is not notarized for distribution to other Macs.
+The build creates an ad-hoc signed Apple silicon app and ZIP for your own Mac.
+
+### Release
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which tests, signs with the hardened runtime, notarizes and staples the app, publishes `Wink-x.y.z.zip` to a GitHub Release, and updates the cask in [xinding33/homebrew-tap](https://github.com/xinding33/homebrew-tap). It needs these repository secrets: `DEVELOPER_ID_P12` and `DEVELOPER_ID_P12_PASSWORD` (the base64-encoded Developer ID Application certificate and its password), `NOTARY_KEY`, `NOTARY_KEY_ID` and `NOTARY_ISSUER_ID` (a base64-encoded App Store Connect API key), and `TAP_DEPLOY_KEY` (a deploy key with write access to the tap).
+
+To produce the same notarized ZIP locally, save notary credentials once with `xcrun notarytool store-credentials wink-notary`, then run `bash scripts/release.sh`.
 
 ## Recovery and limitations
 
 This uses the private `SLSConfigureDisplayEnabled` / `CGSConfigureDisplayEnabled` API loaded at runtime from SkyLight, inside a CoreGraphics transaction with `.forSession`. It makes no permanent display-configuration changes. Private APIs may change in future macOS releases. No SIP changes are needed.
 
-Before turning off a monitor, the app writes its ID, UUID and current boot identifier to `~/Library/Application Support/Display Switch/recovery.json`. A small child process reconnects recorded displays if the app crashes or all remaining active screens disappear. Failed reconnect records are retained for another attempt. Relaunching the app attempts recovery; records from previous boots are ignored to avoid reusing stale display IDs. A disconnected or powered-off monitor may require reconnecting its cable. Logging out or restarting resets the session configuration; Wink then re-applies remembered monitors by UUID in `remembered.json` in the same folder when it next launches.
+Before turning off a monitor, the app writes its ID, UUID and current boot identifier to `~/Library/Application Support/Wink/recovery.json`. A small child process reconnects recorded displays if the app crashes or all remaining active screens disappear. Failed reconnect records are retained for another attempt. Relaunching the app attempts recovery; records from previous boots are ignored to avoid reusing stale display IDs. A disconnected or powered-off monitor may require reconnecting its cable. Logging out or restarting resets the session configuration; Wink then re-applies remembered monitors by UUID in `remembered.json` in the same folder when it next launches.
 
 Only displays disabled by this app are restored. Recovery is best-effort: a macOS/WindowServer failure or simultaneous termination of the app and helper can require a relaunch, cable reconnect, or logout. The app does not override monitors disabled by other utilities.
 
@@ -83,5 +92,3 @@ Wink's implementation, tests, and documentation were developed with AI assistanc
 ## License
 
 Copyright 2026 Xin Ding. Licensed under the [Apache License, Version 2.0](LICENSE).
-
-Wink retains its original bundle identifier and recovery directory for compatibility with the earlier Display Switch build.

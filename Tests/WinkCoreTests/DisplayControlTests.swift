@@ -154,4 +154,23 @@ final class DisplayControlTests: XCTestCase {
         XCTAssertTrue(controller.applyPreferences().isEmpty)
         XCTAssertTrue(backend.changes.isEmpty)
     }
+    func testMigrationMovesStateAndHonorsCurrentBootRecords() throws {
+        let old = folder.appendingPathComponent("Display Switch"), new = folder.appendingPathComponent("Wink")
+        try RecoveryStore(url: old.appendingPathComponent("recovery.json"), boot: "test-boot").save([backend.screens[1]])
+        try PreferenceStore(url: old.appendingPathComponent("remembered.json")).save([RememberedDisplay(uuid: "two", name: "Second")])
+        try PreferenceStore(url: new.appendingPathComponent("remembered.json")).save([RememberedDisplay(uuid: "one", name: "First")])
+        try StateMigration.migrate(from: old, to: new, boot: "test-boot")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
+        let migrated = RecoveryStore(url: new.appendingPathComponent("recovery.json"), boot: "test-boot")
+        XCTAssertEqual(try migrated.load().map(\.uuid), ["two"])
+        XCTAssertEqual(try PreferenceStore(url: new.appendingPathComponent("remembered.json")).load().map(\.uuid), ["one", "two"])
+        try StateMigration.migrate(from: old, to: new, boot: "test-boot")
+    }
+    func testMigrationDropsRecordsFromPreviousBoot() throws {
+        let old = folder.appendingPathComponent("Display Switch"), new = folder.appendingPathComponent("Wink")
+        try RecoveryStore(url: old.appendingPathComponent("recovery.json"), boot: "old-boot").save([backend.screens[1]])
+        try StateMigration.migrate(from: old, to: new, boot: "test-boot")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: new.appendingPathComponent("recovery.json").path))
+    }
 }

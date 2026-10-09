@@ -1,10 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-VERSION="1.0.0"
-# Homebrew builds inside its own sandbox, where SwiftPM's nested sandbox is not allowed.
-swift build -c release --disable-sandbox
-BIN_DIR="$(swift build -c release --disable-sandbox --show-bin-path)"
+# Releases pass WINK_VERSION from the tag; local builds use the latest tag.
+VERSION="${WINK_VERSION:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')}"
+VERSION="${VERSION:-0.0.0}"
+# Ad-hoc by default. scripts/release.sh signs with a Developer ID for distribution.
+IDENTITY="${WINK_SIGN_IDENTITY:--}"
+# Wink supports Apple silicon only.
+swift build -c release --arch arm64
+BIN_DIR="$(swift build -c release --arch arm64 --show-bin-path)"
+rm -rf dist
 APP="$PWD/dist/Wink.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Wink" "$APP/Contents/MacOS/Wink"
@@ -13,7 +18,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>Wink</string>
-<key>CFBundleIdentifier</key><string>local.DisplaySwitch</string>
+<key>CFBundleIdentifier</key><string>io.github.xinding33.wink</string>
 <key>CFBundleName</key><string>Wink</string>
 <key>CFBundleDisplayName</key><string>Wink</string>
 <key>CFBundlePackageType</key><string>APPL</string>
@@ -27,7 +32,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 cp LICENSE "$APP/Contents/Resources/LICENSE"
 swift scripts/make-icon.swift "$APP/Contents/Resources/AppIcon.icns"
-codesign --force --sign - "$APP"
+if [ "$IDENTITY" = "-" ]; then
+  codesign --force --sign - "$APP"
+else
+  codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
+fi
 codesign --verify --strict "$APP"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$PWD/dist/Wink.zip"
 printf 'Built: %s\n' "$APP"

@@ -3,9 +3,12 @@ import WinkCore
 import Darwin
 
 let appName = "Wink"
-// Keep the original recovery directory so an upgrade can reconnect disabled displays.
-let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    .appendingPathComponent("Display Switch", isDirectory: true)
+let bundleID = "io.github.xinding33.wink"
+// Builds before the move to a Developer ID bundle ID kept the Display Switch identifiers.
+let legacyBundleID = "local.DisplaySwitch"
+let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+let legacySupportURL = applicationSupport.appendingPathComponent("Display Switch", isDirectory: true)
+let supportURL = applicationSupport.appendingPathComponent("Wink", isDirectory: true)
 let stateURL = supportURL.appendingPathComponent("recovery.json")
 let preferencesURL = supportURL.appendingPathComponent("remembered.json")
 
@@ -13,7 +16,7 @@ func makeController(_ url: URL = stateURL, preferences: PreferenceStore? = nil) 
     DisplayController(backend: NativeDisplayBackend(), store: RecoveryStore(url: url), preferences: preferences)
 }
 
-let agentLabel = "io.github.xinding33.wink"
+let agentLabel = bundleID
 let agentURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/\(agentLabel).plist")
 
 /// For Homebrew installs, use the version-independent opt/ path so Open at Login survives upgrades.
@@ -122,9 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var pendingApply: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "local.DisplaySwitch")
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? bundleID)
             .filter { $0.processIdentifier != getpid() }
         if let other = others.first { other.activate(options: []); NSApp.terminate(nil); return }
+        migrateFromLegacyBuild()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(systemSymbolName: "display.2", accessibilityDescription: appName)
         statusItem.button?.toolTip = appName
@@ -138,6 +142,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         // Give displays time to come online after login before turning remembered ones off.
         scheduleApply(after: 2)
+    }
+
+    /// Quits a running pre-rename build, which reconnects its displays, before taking over its state.
+    func migrateFromLegacyBuild() {
+        let legacy = { NSRunningApplication.runningApplications(withBundleIdentifier: legacyBundleID).filter { !$0.isTerminated } }
+        legacy().forEach { $0.terminate() }
+        let deadline = Date().addingTimeInterval(10)
+        while !legacy().isEmpty && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
+        do { try StateMigration.migrate(from: legacySupportURL, to: supportURL) } catch { lastError = error.localizedDescription }
     }
 
     func scheduleApply(after delay: TimeInterval) {

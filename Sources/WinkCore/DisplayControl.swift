@@ -251,3 +251,31 @@ public final class DisplayController {
         } catch { return [error.localizedDescription] }
     }
 }
+
+/// Moves state from the folder used before the rename to Wink. Files are merged rather than
+/// overwritten, so recovery records from the current boot still reconnect their displays.
+public enum StateMigration {
+    public static func migrate(from old: URL, to new: URL, boot: String = RecoveryStore.currentBoot()) throws {
+        let files = FileManager.default
+        guard files.fileExists(atPath: old.path) else { return }
+        for name in ["recovery.json", "test-recovery.json"] {
+            let source = RecoveryStore(url: old.appendingPathComponent(name), boot: boot)
+            guard files.fileExists(atPath: source.url.path) else { continue }
+            let legacy = try source.load()
+            if !legacy.isEmpty {
+                let target = RecoveryStore(url: new.appendingPathComponent(name), boot: boot)
+                let current = try target.load()
+                try target.save(current + legacy.filter { old in !current.contains { $0.uuid == old.uuid } })
+            }
+            try files.removeItem(at: source.url)
+        }
+        let source = PreferenceStore(url: old.appendingPathComponent("remembered.json"))
+        if files.fileExists(atPath: source.url.path) {
+            let target = PreferenceStore(url: new.appendingPathComponent("remembered.json"))
+            let current = try target.load()
+            try target.save(current + source.load().filter { old in !current.contains { $0.uuid == old.uuid } })
+            try files.removeItem(at: source.url)
+        }
+        if try files.contentsOfDirectory(atPath: old.path).allSatisfy({ $0 == ".DS_Store" }) { try files.removeItem(at: old) }
+    }
+}
