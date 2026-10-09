@@ -22,7 +22,7 @@ To build it yourself instead, see [Build](#build).
 
 ### Updating
 
-Wink updates itself: once a day it checks for a new [release](https://github.com/xinding33/wink/releases), checks that it is signed by the same developer, replaces itself and restarts. Like quitting, restarting briefly reconnects your displays; the new version turns remembered ones off again. To turn that off, uncheck **Install Updates Automatically** in its menu, and use **Check for Updates…** instead. Because Wink updates itself, `brew upgrade` skips it unless you pass `--greedy`.
+Wink updates itself: once a day it checks for a new [release](https://github.com/xinding33/wink/releases), checks that it is signed by the same developer, replaces itself and restarts. Like quitting, restarting briefly reconnects your displays; the new version turns remembered ones off again. To turn that off, uncheck **Install Updates Automatically** in its menu, and use **Check for Updates…** instead. `brew upgrade` also works: it quits Wink, which reconnects your displays; open it again afterwards.
 
 ## Use
 
