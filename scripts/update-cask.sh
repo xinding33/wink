@@ -1,6 +1,9 @@
 #!/bin/bash
 # Writes the wink cask for a release into a homebrew-tap checkout and retires the source-build formula.
 # Usage: scripts/update-cask.sh TAP_DIR VERSION SHA256
+#
+# Wink updates itself from 1.2.0, but the cask does not say `auto_updates true` yet: brew upgrade
+# would then skip Wink, stranding 1.1.0, which cannot update itself. Add it in a later release.
 set -euo pipefail
 TAP="$1" VERSION="$2" SHA="$3"
 mkdir -p "$TAP/Casks"
@@ -14,8 +17,6 @@ cask "wink" do
   desc "Menu bar app to disconnect and reconnect external displays without unplugging"
   homepage "https://github.com/xinding33/wink"
 
-  # Wink installs its own updates (Install Updates Automatically, on by default).
-  auto_updates true
   depends_on arch: :arm64
   depends_on macos: :ventura
 
