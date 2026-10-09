@@ -3,6 +3,7 @@ import WinkCore
 import Darwin
 
 let appName = "Wink"
+let appVersion = Version(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") ?? Version("0.0.0")!
 let bundleID = "io.github.xinding33.wink"
 // Builds before the move to a Developer ID bundle ID kept the Display Switch identifiers.
 let legacyBundleID = "local.DisplaySwitch"
@@ -28,6 +29,12 @@ func stableExecutablePath() -> String {
 /// Open at Login is a LaunchAgent. It is not kept alive, so a crash leaves displays reconnected.
 var opensAtLogin: Bool { FileManager.default.fileExists(atPath: agentURL.path) }
 
+/// Install Updates Automatically is on unless the user turns it off.
+var autoUpdate: Bool {
+    get { UserDefaults.standard.object(forKey: "autoUpdate") as? Bool ?? true }
+    set { UserDefaults.standard.set(newValue, forKey: "autoUpdate") }
+}
+
 func writeLaunchAgent() throws {
     let plist: [String: Any] = ["Label": agentLabel, "ProgramArguments": [stableExecutablePath()],
                                 "RunAtLoad": true, "ProcessType": "Interactive"]
@@ -51,7 +58,7 @@ final class RecoveryHelper {
         try child.run()
         process = child
     }
-    func stop() { if running { process?.terminate() }; process = nil }
+    func stop() { if running { process?.terminate(); process?.waitUntilExit() }; process = nil }
 }
 
 // The helper survives an app crash and only reconnects displays this app recorded.
@@ -76,6 +83,9 @@ if CommandLine.arguments.contains("--diagnose") {
     for screen in NSScreen.screens {
         if let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 { backend.names[id] = screen.localizedName }
     }
+    print("Wink \(appVersion) at \(Bundle.main.bundlePath)")
+    print("Install Updates Automatically: \(autoUpdate ? "on" : "off")"
+          + (Updater.isDeveloperIDSigned(Bundle.main.bundleURL) ? "" : " (source build: cannot update itself)"))
     print("Display disconnect API: \(backend.available ? "available" : "unavailable")")
     do {
         let data = try JSONEncoder().encode(backend.displays())
@@ -112,6 +122,9 @@ if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--test-cycle
     }
 }
 
+// Only release builds can install releases, since an update must be signed the same way.
+let canInstallUpdates = Updater.isDeveloperIDSigned(Bundle.main.bundleURL)
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let controller = makeController(preferences: PreferenceStore(url: preferencesURL))
     let helper = RecoveryHelper()
@@ -123,6 +136,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Displays that failed to turn off automatically are not retried until the user turns them off again.
     var gaveUp: Set<String> = []
     var pendingApply: DispatchWorkItem?
+    // What the updater is doing, or nil when it is idle.
+    var updateStatus: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? bundleID)
@@ -142,6 +157,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         // Give displays time to come online after login before turning remembered ones off.
         scheduleApply(after: 2)
+        checkForUpdatesAutomatically()
+        Timer.scheduledTimer(withTimeInterval: 60 * 60, repeats: true) { [weak self] _ in self?.checkForUpdatesAutomatically() }
     }
 
     /// Quits a running pre-rename build, which reconnects its displays, before taking over its state.
@@ -261,8 +278,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if lastError != nil { add("View Last Error…", action: #selector(showLastError), to: menu) }
         add("Display Settings…", action: #selector(openSettings), to: menu)
         add("Open at Login", action: #selector(toggleLoginItem), to: menu).state = opensAtLogin ? .on : .off
+        let automatic = add("Install Updates Automatically", action: #selector(toggleAutoUpdate), to: menu)
+        automatic.state = autoUpdate && canInstallUpdates ? .on : .off
+        automatic.isEnabled = canInstallUpdates
+        if !canInstallUpdates { automatic.toolTip = "Builds made from source update by rebuilding." }
         menu.addItem(.separator())
         add("About Wink", action: #selector(about), to: menu)
+        add(updateStatus ?? "Check for Updates…", action: #selector(checkForUpdates), to: menu).isEnabled = updateStatus == nil
         add("Quit & Reconnect Displays", action: #selector(quit), to: menu, key: "q").toolTip =
             "Displays turn back on until Wink launches again. Reconnect a display to stop keeping it off."
         menu.delegate = self
@@ -308,6 +330,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func toggleLoginItem() {
         perform { if opensAtLogin { try FileManager.default.removeItem(at: agentURL) } else { try writeLaunchAgent() } }
     }
+    @objc func toggleAutoUpdate() { autoUpdate.toggle(); checkForUpdatesAutomatically() }
+
+    /// When automatic updates are on, checks GitHub at most once a day and installs any newer release.
+    func checkForUpdatesAutomatically() {
+        let lastCheck = UserDefaults.standard.object(forKey: "lastUpdateCheck") as? Date ?? .distantPast
+        guard autoUpdate, canInstallUpdates, updateStatus == nil, Date().timeIntervalSince(lastCheck) > 24 * 60 * 60 else { return }
+        updateStatus = "Checking for Updates…"
+        Task { @MainActor in
+            defer { updateStatus = nil }
+            // A failed check is retried within the hour; a failed install at the next daily check.
+            do { if let release = try await newerRelease() { try await installUpdate(release) } }
+            catch { NSLog("Automatic update failed: %@", error.localizedDescription) }
+        }
+    }
+
+    @objc func checkForUpdates() {
+        updateStatus = "Checking for Updates…"
+        Task { @MainActor in
+            defer { updateStatus = nil }
+            do {
+                let release = try await newerRelease()
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                guard let release else {
+                    alert.messageText = "Wink is up to date"
+                    alert.informativeText = "Version \(appVersion) is the latest."
+                    alert.runModal()
+                    return
+                }
+                alert.messageText = "Wink \(release.version) is available"
+                alert.informativeText = canInstallUpdates
+                    ? "You have version \(appVersion). Restarting reconnects your displays briefly; remembered ones turn off again."
+                    : "You have version \(appVersion). This copy was built from source, so it cannot update itself."
+                if canInstallUpdates { alert.addButton(withTitle: "Install and Restart") }
+                alert.addButton(withTitle: "Release Notes")
+                alert.addButton(withTitle: "Later")
+                switch (alert.runModal(), canInstallUpdates) {
+                case (.alertFirstButtonReturn, true): try await installUpdate(release)
+                case (.alertFirstButtonReturn, false), (.alertSecondButtonReturn, true): NSWorkspace.shared.open(release.page)
+                default: break
+                }
+            } catch {
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                alert.messageText = "Could not update Wink"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.runModal()
+            }
+        }
+    }
+
+    /// The latest release, if it is newer than this copy.
+    @MainActor func newerRelease() async throws -> Release? {
+        let release = try await Updater.latestRelease()
+        UserDefaults.standard.set(Date(), forKey: "lastUpdateCheck")
+        return release.version > appVersion ? release : nil
+    }
+
+    /// Replaces this copy with `release` and restarts into it.
+    @MainActor func installUpdate(_ release: Release) async throws {
+        updateStatus = "Installing Wink \(release.version)…"
+        try await Updater.install(release, replacing: Bundle.main.bundleURL)
+        try relaunch()
+    }
+
+    /// Like quitting, this reconnects displays first, so they are never left off without a helper.
+    /// The new copy turns remembered displays off again when it launches.
+    func relaunch() throws {
+        _ = controller.reconnectAll()
+        helper.stop()
+        var arguments = CommandLine.arguments.map { strdup($0) } + [nil]
+        execv(Bundle.main.executablePath!, &arguments)
+        // Only reached if execv failed. Keep running the old code until the next launch.
+        let reason = String(cString: strerror(errno))
+        do { try helper.start(store: controller.store) } catch { lastError = error.localizedDescription }
+        scheduleApply(after: 2)
+        throw DisplayError("Wink was updated but could not restart (\(reason)). Quit and open it again to finish.")
+    }
+
     @objc func showLastError() {
         guard let lastError else { return }
         NSApp.activate(ignoringOtherApps: true)

@@ -12,13 +12,17 @@ brew install --cask xinding33/tap/wink
 
 Or download `Wink-x.y.z.zip` from the [latest release](https://github.com/xinding33/wink/releases/latest), unzip it, and move `Wink.app` to Applications.
 
-Open Wink, then choose **Open at Login** from its menu bar icon. `brew upgrade` quits Wink, which reconnects your displays; open it again afterwards.
+Open Wink, then choose **Open at Login** from its menu bar icon.
 
 To uninstall, turn off **Open at Login** and quit Wink from its menu, then run `brew uninstall --cask wink` (or delete `Wink.app`).
 
 If you installed the earlier source-build formula, switch with `brew uninstall wink && brew install --cask xinding33/tap/wink`. Wink moves its remembered displays to the new location on first launch.
 
 To build it yourself instead, see [Build](#build).
+
+### Updating
+
+Wink updates itself: once a day it checks for a new [release](https://github.com/xinding33/wink/releases), checks that it is signed by the same developer, replaces itself and restarts. Like quitting, restarting briefly reconnects your displays; the new version turns remembered ones off again. To turn that off, uncheck **Install Updates Automatically** in its menu, and use **Check for Updates…** instead. Because Wink updates itself, `brew upgrade` skips it unless you pass `--greedy`.
 
 ## Use
 
@@ -30,7 +34,7 @@ The app keeps the built-in screen and at least one active screen on. Mirrored di
 
 ## Build
 
-Requires Xcode or the Swift command-line tools. No packages, subscription, administrator access, or network service is required at runtime.
+Requires Xcode or the Swift command-line tools. No packages, subscription, or administrator access is required at runtime. The only network access is the update check against GitHub.
 
 ```sh
 swift test
@@ -38,7 +42,7 @@ bash scripts/build.sh
 open "dist/Wink.app"
 ```
 
-The build creates an ad-hoc signed Apple silicon app and ZIP for your own Mac.
+The build creates an ad-hoc signed Apple silicon app and ZIP for your own Mac. Builds you make yourself cannot install releases from the menu, since they are not signed by the same developer; pull and build again to update.
 
 ### Release
 
