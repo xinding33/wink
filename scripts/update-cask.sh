@@ -14,6 +14,8 @@ cask "wink" do
   desc "Menu bar app to disconnect and reconnect external displays without unplugging"
   homepage "https://github.com/xinding33/wink"
 
+  # Wink installs its own updates (Install Updates Automatically, on by default).
+  auto_updates true
   depends_on arch: :arm64
   depends_on macos: :ventura
 
