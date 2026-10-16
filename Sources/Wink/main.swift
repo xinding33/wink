@@ -141,7 +141,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? bundleID)
-            .filter { $0.processIdentifier != getpid() }
+            // Alive, not just listed: right after a restart, the old copy can still be listed.
+            .filter { $0.processIdentifier != getpid() && kill($0.processIdentifier, 0) == 0 }
         if let other = others.first { other.activate(options: []); NSApp.terminate(nil); return }
         migrateFromLegacyBuild()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -401,10 +402,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func relaunch() throws {
         _ = controller.reconnectAll()
         helper.stop()
-        var arguments = CommandLine.arguments.map { strdup($0) } + [nil]
-        execv(Bundle.main.executablePath!, &arguments)
-        // Only reached if execv failed. Keep running the old code until the next launch.
-        let reason = String(cString: strerror(errno))
+        // Only returns if it couldn't restart. Keep running the old code until the next launch.
+        let reason = Relaunch.now(agentLabel: agentLabel)
         do { try helper.start(store: controller.store) } catch { lastError = error.localizedDescription }
         scheduleApply(after: 2)
         throw DisplayError("Wink was updated but could not restart (\(reason)). Quit and open it again to finish.")
